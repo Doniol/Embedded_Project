@@ -234,20 +234,20 @@ static void AppTaskStart(void *p_arg)
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
     
-  OSTaskCreate(
-      (OS_TCB *)&ReadAnalogTaskTCB,
-      (CPU_CHAR *)"Read Analog Task",
-      (OS_TASK_PTR)ReadAnalogTask,
-      (void *)0,
-      (OS_PRIO)READ_ANALOG_TASK_PRIO,
-      (CPU_STK *)&ReadAnalogTaskStk[0],
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
-      (OS_MSG_QTY)5u,
-      (OS_TICK)0u,
-      (void *)0,
-      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-      (OS_ERR *)&os_err);
+  // OSTaskCreate(
+  //     (OS_TCB *)&ReadAnalogTaskTCB,
+  //     (CPU_CHAR *)"Read Analog Task",
+  //     (OS_TASK_PTR)ReadAnalogTask,
+  //     (void *)0,
+  //     (OS_PRIO)READ_ANALOG_TASK_PRIO,
+  //     (CPU_STK *)&ReadAnalogTaskStk[0],
+  //     (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
+  //     (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
+  //     (OS_MSG_QTY)5u,
+  //     (OS_TICK)0u,
+  //     (void *)0,
+  //     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+  //     (OS_ERR *)&os_err);
 
   // OSTaskCreate(
   //     (OS_TCB *)&ReadTaskTCB,
@@ -264,20 +264,20 @@ static void AppTaskStart(void *p_arg)
   //     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
   //     (OS_ERR *)&os_err);
   
-  // OSTaskCreate(
-  //     (OS_TCB *)&SendTaskTCB,
-  //     (CPU_CHAR *)"Send Task",
-  //     (OS_TASK_PTR)SendTask,
-  //     (void *)0,
-  //     (OS_PRIO)SEND_TASK_PRIO,
-  //     (CPU_STK *)&SendTaskStk[0],
-  //     (CPU_STK_SIZE)SEND_TASK_STK_SIZE / 10,
-  //     (CPU_STK_SIZE)SEND_TASK_STK_SIZE,
-  //     (OS_MSG_QTY)5u,
-  //     (OS_TICK)0u,
-  //     (void *)0,
-  //     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-  //     (OS_ERR *)&os_err);
+  OSTaskCreate(
+      (OS_TCB *)&SendTaskTCB,
+      (CPU_CHAR *)"Send Task",
+      (OS_TASK_PTR)SendTask,
+      (void *)0,
+      (OS_PRIO)SEND_TASK_PRIO,
+      (CPU_STK *)&SendTaskStk[0],
+      (CPU_STK_SIZE)SEND_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)SEND_TASK_STK_SIZE,
+      (OS_MSG_QTY)5u,
+      (OS_TICK)0u,
+      (void *)0,
+      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+      (OS_ERR *)&os_err);
 
   // OSTaskCreate(
   //   (OS_TCB *)&MoistureDetectionTCB,
@@ -332,7 +332,7 @@ static void SendTask(void *p_arg){
   char MSG[] = "test\n\r";
 
   while(DEF_TRUE){
-    HAL_UART_Transmit(&huart2, (uint8_t*)MSG, sizeof(MSG), 100);
+    HAL_UART_Transmit(&huart3, (uint8_t*)MSG, sizeof(MSG), 100);
     
     OSSemPost(
       (OS_SEM*)&startBlink,
@@ -354,7 +354,7 @@ static void ReadTask(void *p_arg){
   char MSG[1];
 
   while(DEF_TRUE){
-    HAL_UART_Receive(&huart2, (uint8_t*)MSG, sizeof(MSG), 100);
+    HAL_UART_Receive(&huart3, (uint8_t*)MSG, sizeof(MSG), 100);
     OSSemPost(
       (OS_SEM*)&startBlink,
       (OS_OPT)OS_OPT_POST_1,
