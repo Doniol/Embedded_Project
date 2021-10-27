@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#define TRANSMITTER // Either set the board as TRANSMITTER, RECEIVER or ANALOG_MEASURE
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -32,19 +33,23 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* Buffer Size */
+#define BUFFER_SIZE 100
 /* Task Stack Size */
 #define APP_TASK_START_STK_SIZE 128u
 #define MOISTURE_DETECTION_STK_SIZE 128u
 #define BLINK_TASK_STK_SIZE 128u
-#define READ_TASK_STK_SIZE 128u
-#define SEND_TASK_STK_SIZE 128u
+#define RECEIVE_TASK_STK_SIZE 128u
+#define TRANSMIT_TASK_STK_SIZE 128u
+#define TRANSMIT_TO_PC_TASK_STK_SIZE 128u
 #define READ_ANALOG_TASK_STK_SIZE 128u
 /* Task Priority */
 #define APP_TASK_START_PRIO 1u
 #define MOISTURE_DETECTION_PRIO 4u
 #define BLINK_TASK_PRIO 5u
-#define READ_TASK_PRIO 2u
-#define SEND_TASK_PRIO 3u
+#define RECEIVE_TASK_PRIO 2u
+#define TRANSMIT_TASK_PRIO 2u
+#define TRANSMIT_TO_PC_TASK_PRIO 3u
 #define READ_ANALOG_TASK_PRIO 6u
 /* USER CODE END PD */
 
@@ -56,24 +61,31 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+/* Ring Buffer */
+struct ring_buffer rb;
+unsigned char buffer[BUFFER_SIZE];
 /* Task Control Block */
 static OS_TCB AppTaskStartTCB;
 static OS_TCB MoistureDetectionTCB;
 static OS_TCB BlinkTaskTCB;
-static OS_TCB ReadTaskTCB;
-static OS_TCB SendTaskTCB;
+static OS_TCB ReceiveTaskTCB;
+static OS_TCB TransmitTaskTCB;
+static OS_TCB TransmitToPCTaskTCB;
 static OS_TCB ReadAnalogTaskTCB;
 /* Task Stack */
 static CPU_STK AppTaskStartStk[APP_TASK_START_STK_SIZE];
 static CPU_STK MoistureDetectionStk[MOISTURE_DETECTION_STK_SIZE];
 static CPU_STK BlinkTaskStk[BLINK_TASK_STK_SIZE];
-static CPU_STK ReadTaskStk[READ_TASK_STK_SIZE];
-static CPU_STK SendTaskStk[SEND_TASK_STK_SIZE];
+static CPU_STK ReceiveTaskStk[RECEIVE_TASK_STK_SIZE];
+static CPU_STK TransmitTaskStk[TRANSMIT_TASK_STK_SIZE];
+static CPU_STK TransmitToPCTaskStk[TRANSMIT_TO_PC_TASK_STK_SIZE];
 static CPU_STK ReadAnalogTaskStk[READ_ANALOG_TASK_STK_SIZE];
 /* Semaphore */
 OS_SEM sem;
 OS_SEM startBlink;
 OS_SEM endBlink;
+OS_SEM transmitToPC;
+OS_SEM comms_busy;
 
 /* USER CODE END PV */
 
@@ -83,8 +95,9 @@ void SystemClock_Config(void);
 static void AppTaskStart(void *p_arg);
 static void BlinkTask(void *p_arg);
 static void print_moisture_percentage();
-static void ReadTask(void *p_arg);
-static void SendTask(void *p_arg);
+static void ReceiveTask(void *p_arg);
+static void TransmitTask(void *p_arg);
+static void TransmitToPCTask(void *p_arg);
 static void ReadAnalogTask(void *p_arg);
 /* USER CODE END PFP */
 
@@ -112,6 +125,18 @@ int main(void)
   
   OSSemCreate(
       (OS_SEM *)&endBlink,
+      (CPU_CHAR *)"Semaphore",
+      (OS_SEM_CTR)0,
+      (OS_ERR *)&os_err);
+  
+  OSSemCreate(
+      (OS_SEM *)&transmitToPC,
+      (CPU_CHAR *)"Semaphore",
+      (OS_SEM_CTR)0,
+      (OS_ERR *)&os_err);
+  
+  OSSemCreate(
+      (OS_SEM *)&comms_busy,
       (CPU_CHAR *)"Semaphore",
       (OS_SEM_CTR)0,
       (OS_ERR *)&os_err);
@@ -218,6 +243,7 @@ static void AppTaskStart(void *p_arg)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   MX_ADC_Init();
+  init_buffer(&rb, buffer, BUFFER_SIZE);
 
   OSTaskCreate(
       (OS_TCB *)&BlinkTaskTCB,
@@ -234,50 +260,75 @@ static void AppTaskStart(void *p_arg)
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
     
-  // OSTaskCreate(
-  //     (OS_TCB *)&ReadAnalogTaskTCB,
-  //     (CPU_CHAR *)"Read Analog Task",
-  //     (OS_TASK_PTR)ReadAnalogTask,
-  //     (void *)0,
-  //     (OS_PRIO)READ_ANALOG_TASK_PRIO,
-  //     (CPU_STK *)&ReadAnalogTaskStk[0],
-  //     (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
-  //     (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
-  //     (OS_MSG_QTY)5u,
-  //     (OS_TICK)0u,
-  //     (void *)0,
-  //     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-  //     (OS_ERR *)&os_err);
+#ifdef ANALOG_MEASURE
 
-  // OSTaskCreate(
-  //     (OS_TCB *)&ReadTaskTCB,
-  //     (CPU_CHAR *)"Read Task",
-  //     (OS_TASK_PTR)ReadTask,
-  //     (void *)0,
-  //     (OS_PRIO)READ_TASK_PRIO,
-  //     (CPU_STK *)&ReadTaskStk[0],
-  //     (CPU_STK_SIZE)READ_TASK_STK_SIZE / 10,
-  //     (CPU_STK_SIZE)READ_TASK_STK_SIZE,
-  //     (OS_MSG_QTY)5u,
-  //     (OS_TICK)0u,
-  //     (void *)0,
-  //     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-  //     (OS_ERR *)&os_err);
-  
   OSTaskCreate(
-      (OS_TCB *)&SendTaskTCB,
-      (CPU_CHAR *)"Send Task",
-      (OS_TASK_PTR)SendTask,
+      (OS_TCB *)&ReadAnalogTaskTCB,
+      (CPU_CHAR *)"Read Analog Task",
+      (OS_TASK_PTR)ReadAnalogTask,
       (void *)0,
-      (OS_PRIO)SEND_TASK_PRIO,
-      (CPU_STK *)&SendTaskStk[0],
-      (CPU_STK_SIZE)SEND_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)SEND_TASK_STK_SIZE,
+      (OS_PRIO)READ_ANALOG_TASK_PRIO,
+      (CPU_STK *)&ReadAnalogTaskStk[0],
+      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
       (OS_MSG_QTY)5u,
       (OS_TICK)0u,
       (void *)0,
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
+
+#endif
+#ifdef RECEIVER
+
+  OSTaskCreate(
+      (OS_TCB *)&ReceiveTaskTCB,
+      (CPU_CHAR *)"Receive Task",
+      (OS_TASK_PTR)ReceiveTask,
+      (void *)0,
+      (OS_PRIO)RECEIVE_TASK_PRIO,
+      (CPU_STK *)&ReceiveTaskStk[0],
+      (CPU_STK_SIZE)RECEIVE_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)RECEIVE_TASK_STK_SIZE,
+      (OS_MSG_QTY)5u,
+      (OS_TICK)0u,
+      (void *)0,
+      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+      (OS_ERR *)&os_err);
+    
+  OSTaskCreate(
+      (OS_TCB *)&TransmitToPCTaskTCB,
+      (CPU_CHAR *)"Transmit to PC Task",
+      (OS_TASK_PTR)TransmitToPCTask,
+      (void *)0,
+      (OS_PRIO)TRANSMIT_TO_PC_TASK_PRIO,
+      (CPU_STK *)&TransmitTaskStk[0],
+      (CPU_STK_SIZE)TRANSMIT_TO_PC_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)TRANSMIT_TO_PC_TASK_STK_SIZE,
+      (OS_MSG_QTY)5u,
+      (OS_TICK)0u,
+      (void *)0,
+      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+      (OS_ERR *)&os_err);
+
+#endif
+#ifdef TRANSMITTER
+  
+  OSTaskCreate(
+      (OS_TCB *)&TransmitTaskTCB,
+      (CPU_CHAR *)"Transmit Task",
+      (OS_TASK_PTR)TransmitTask,
+      (void *)0,
+      (OS_PRIO)TRANSMIT_TASK_PRIO,
+      (CPU_STK *)&TransmitTaskStk[0],
+      (CPU_STK_SIZE)TRANSMIT_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)TRANSMIT_TASK_STK_SIZE,
+      (OS_MSG_QTY)5u,
+      (OS_TICK)0u,
+      (void *)0,
+      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+      (OS_ERR *)&os_err);
+
+#endif
 
   // OSTaskCreate(
   //   (OS_TCB *)&MoistureDetectionTCB,
@@ -294,6 +345,11 @@ static void AppTaskStart(void *p_arg)
   //   (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
   //   (OS_ERR *)&os_err
   // );
+  OSSemPost(
+      (OS_SEM*)&comms_busy,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
 }
 
 static void ReadAnalogTask(void *p_arg){
@@ -327,12 +383,24 @@ static void ReadAnalogTask(void *p_arg){
   }
 }
 
-static void SendTask(void *p_arg){
+static void TransmitTask(void *p_arg){
   OS_ERR os_err;
-  char MSG[] = "test\n\r";
+  unsigned char MSG = 54;
 
   while(DEF_TRUE){
-    HAL_UART_Transmit(&huart3, (uint8_t*)MSG, sizeof(MSG), 100);
+    OSSemPend(
+      (OS_SEM*)&comms_busy,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
+    HAL_UART_Transmit(&huart3, MSG, sizeof(MSG), 100);
+    OSSemPost(
+        (OS_SEM*)&comms_busy,
+        (OS_OPT)OS_OPT_POST_1,
+        (OS_ERR*)&os_err
+      );
     
     OSSemPost(
       (OS_SEM*)&startBlink,
@@ -349,12 +417,62 @@ static void SendTask(void *p_arg){
   }
 }
 
-static void ReadTask(void *p_arg){
+static void TransmitToPCTask(void *p_arg){
   OS_ERR os_err;
-  char MSG[1];
+  while(DEF_TRUE){
+    OSSemPend(
+      (OS_SEM*)&transmitToPC,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
+    OSSemPend(
+      (OS_SEM*)&comms_busy,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
+    unsigned char MSG[get_buffer_size(&rb)];
+    pop_string_from_buffer(&rb, MSG, sizeof(MSG));
+    HAL_UART_Transmit(&huart2, MSG, sizeof(MSG), 100);
+    OSSemPost(
+        (OS_SEM*)&comms_busy,
+        (OS_OPT)OS_OPT_POST_1,
+        (OS_ERR*)&os_err
+      );
+  }
+}
+
+static void ReceiveTask(void *p_arg){
+  OS_ERR os_err;
 
   while(DEF_TRUE){
+    char MSG[1];
+    OSSemPend(
+      (OS_SEM*)&comms_busy,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
     HAL_UART_Receive(&huart3, (uint8_t*)MSG, sizeof(MSG), 100);
+    append_char_to_buffer(&rb, MSG[0]);
+    OSSemPost(
+        (OS_SEM*)&comms_busy,
+        (OS_OPT)OS_OPT_POST_1,
+        (OS_ERR*)&os_err
+      );
+
+    if(get_buffer_size(&rb)){
+      OSSemPost(
+        (OS_SEM*)&transmitToPC,
+        (OS_OPT)OS_OPT_POST_1,
+        (OS_ERR*)&os_err
+      );
+    }
+
     OSSemPost(
       (OS_SEM*)&startBlink,
       (OS_OPT)OS_OPT_POST_1,
