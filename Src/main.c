@@ -34,7 +34,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 /* Buffer Size */
-#define BUFFER_SIZE 20
+#define BUFFER_SIZE 100
 /* Task Stack Size */
 #define APP_TASK_START_STK_SIZE 128u
 #define MOISTURE_DETECTION_STK_SIZE 128u
