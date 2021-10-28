@@ -19,7 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#define TRANSMITTER // Either set the board as TRANSMITTER, RECEIVER or ANALOG_MEASURE
+#define RECEIVER // Either set the board as TRANSMITTER, RECEIVER or ANALOG_MEASURE
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -34,7 +34,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 /* Buffer Size */
-#define BUFFER_SIZE 100
+#define BUFFER_SIZE 20
 /* Task Stack Size */
 #define APP_TASK_START_STK_SIZE 128u
 #define MOISTURE_DETECTION_STK_SIZE 128u
@@ -64,6 +64,8 @@
 /* Ring Buffer */
 struct ring_buffer rb;
 unsigned char buffer[BUFFER_SIZE];
+char message[BUFFER_SIZE];
+int voltage;
 /* Task Control Block */
 static OS_TCB AppTaskStartTCB;
 static OS_TCB MoistureDetectionTCB;
@@ -84,8 +86,10 @@ static CPU_STK ReadAnalogTaskStk[READ_ANALOG_TASK_STK_SIZE];
 OS_SEM sem;
 OS_SEM startBlink;
 OS_SEM endBlink;
-OS_SEM transmitToPC;
+OS_SEM startAnalog;
+OS_SEM endAnalog;
 OS_SEM comms_busy;
+OS_SEM transmitUART3;
 
 /* USER CODE END PV */
 
@@ -94,7 +98,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void AppTaskStart(void *p_arg);
 static void BlinkTask(void *p_arg);
-static void print_moisture_percentage();
+static void MoisturePercentageTask();
 static void ReceiveTask(void *p_arg);
 static void TransmitTask(void *p_arg);
 static void TransmitToPCTask(void *p_arg);
@@ -130,13 +134,25 @@ int main(void)
       (OS_ERR *)&os_err);
   
   OSSemCreate(
-      (OS_SEM *)&transmitToPC,
+      (OS_SEM *)&startAnalog,
+      (CPU_CHAR *)"Semaphore",
+      (OS_SEM_CTR)0,
+      (OS_ERR *)&os_err);
+    
+  OSSemCreate(
+      (OS_SEM *)&endAnalog,
       (CPU_CHAR *)"Semaphore",
       (OS_SEM_CTR)0,
       (OS_ERR *)&os_err);
   
   OSSemCreate(
       (OS_SEM *)&comms_busy,
+      (CPU_CHAR *)"Semaphore",
+      (OS_SEM_CTR)0,
+      (OS_ERR *)&os_err);
+      
+  OSSemCreate(
+      (OS_SEM *)&transmitUART3,
       (CPU_CHAR *)"Semaphore",
       (OS_SEM_CTR)0,
       (OS_ERR *)&os_err);
@@ -295,21 +311,6 @@ static void AppTaskStart(void *p_arg)
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
     
-  OSTaskCreate(
-      (OS_TCB *)&TransmitToPCTaskTCB,
-      (CPU_CHAR *)"Transmit to PC Task",
-      (OS_TASK_PTR)TransmitToPCTask,
-      (void *)0,
-      (OS_PRIO)TRANSMIT_TO_PC_TASK_PRIO,
-      (CPU_STK *)&TransmitTaskStk[0],
-      (CPU_STK_SIZE)TRANSMIT_TO_PC_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)TRANSMIT_TO_PC_TASK_STK_SIZE,
-      (OS_MSG_QTY)5u,
-      (OS_TICK)0u,
-      (void *)0,
-      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-      (OS_ERR *)&os_err);
-
 #endif
 #ifdef TRANSMITTER
   
@@ -328,23 +329,39 @@ static void AppTaskStart(void *p_arg)
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
 
+  OSTaskCreate(
+    (OS_TCB *)&MoistureDetectionTCB,
+    (CPU_CHAR *)"Moisture Detection",
+    (OS_TASK_PTR)MoisturePercentageTask,
+    (void *)0,
+    (OS_PRIO)MOISTURE_DETECTION_PRIO,
+    (CPU_STK *)&MoistureDetectionStk[0],
+    (CPU_STK_SIZE)MOISTURE_DETECTION_STK_SIZE / 10,
+    (CPU_STK_SIZE)MOISTURE_DETECTION_STK_SIZE,
+    (OS_MSG_QTY)5u,
+    (OS_TICK)0u,
+    (void *)0,
+    (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+    (OS_ERR *)&os_err
+  );
+
+  OSTaskCreate(
+      (OS_TCB *)&ReadAnalogTaskTCB,
+      (CPU_CHAR *)"Read Analog Task",
+      (OS_TASK_PTR)ReadAnalogTask,
+      (void *)0,
+      (OS_PRIO)READ_ANALOG_TASK_PRIO,
+      (CPU_STK *)&ReadAnalogTaskStk[0],
+      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
+      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
+      (OS_MSG_QTY)5u,
+      (OS_TICK)0u,
+      (void *)0,
+      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+      (OS_ERR *)&os_err);
+
 #endif
 
-  // OSTaskCreate(
-  //   (OS_TCB *)&MoistureDetectionTCB,
-  //   (CPU_CHAR *)"Moisture Detection",
-  //   (OS_TASK_PTR)print_moisture_percentage,
-  //   (void *)0,
-  //   (OS_PRIO)MOISTURE_DETECTION_PRIO,
-  //   (CPU_STK *)&MoistureDetectionStk[0],
-  //   (CPU_STK_SIZE)MOISTURE_DETECTION_STK_SIZE / 10,
-  //   (CPU_STK_SIZE)MOISTURE_DETECTION_STK_SIZE,
-  //   (OS_MSG_QTY)5u,
-  //   (OS_TICK)0u,
-  //   (void *)0,
-  //   (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-  //   (OS_ERR *)&os_err
-  // );
   OSSemPost(
       (OS_SEM*)&comms_busy,
       (OS_OPT)OS_OPT_POST_1,
@@ -357,27 +374,23 @@ static void ReadAnalogTask(void *p_arg){
   OS_ERR os_err;
 
   while(DEF_TRUE){
-    char MSG[20];
+    OSSemPend(
+      (OS_SEM*)&startAnalog,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
     uint16_t raw_value;
-    float temp;
 
     HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
 
     raw_value = HAL_ADC_GetValue(&hadc);
-    temp = ((float)raw_value) / 4096 * 3300;
+    voltage = ((float)raw_value) / 4096 * 3300;
     
-    sprintf(MSG, "rawValue: %hu\r\n", raw_value);
-    HAL_UART_Transmit(&huart2, (uint8_t*)MSG, sizeof(MSG), HAL_MAX_DELAY);
     OSSemPost(
-      (OS_SEM*)&startBlink,
+      (OS_SEM*)&endAnalog,
       (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-    OSSemPend(
-      (OS_SEM*)&endBlink,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
   }
@@ -385,9 +398,15 @@ static void ReadAnalogTask(void *p_arg){
 
 static void TransmitTask(void *p_arg){
   OS_ERR os_err;
-  unsigned char MSG = 54;
 
   while(DEF_TRUE){
+    OSSemPend(
+      (OS_SEM*)&transmitUART3,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
     OSSemPend(
       (OS_SEM*)&comms_busy,
       (OS_TICK)0,
@@ -395,12 +414,12 @@ static void TransmitTask(void *p_arg){
       (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
-    HAL_UART_Transmit(&huart3, MSG, sizeof(MSG), 100);
+    HAL_UART_Transmit(&huart3, message, BUFFER_SIZE, 100);
     OSSemPost(
-        (OS_SEM*)&comms_busy,
-        (OS_OPT)OS_OPT_POST_1,
-        (OS_ERR*)&os_err
-      );
+      (OS_SEM*)&comms_busy,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
     
     OSSemPost(
       (OS_SEM*)&startBlink,
@@ -417,39 +436,10 @@ static void TransmitTask(void *p_arg){
   }
 }
 
-static void TransmitToPCTask(void *p_arg){
-  OS_ERR os_err;
-  while(DEF_TRUE){
-    OSSemPend(
-      (OS_SEM*)&transmitToPC,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-    OSSemPend(
-      (OS_SEM*)&comms_busy,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-    unsigned char MSG[get_buffer_size(&rb)];
-    pop_string_from_buffer(&rb, MSG, sizeof(MSG));
-    HAL_UART_Transmit(&huart2, MSG, sizeof(MSG), 100);
-    OSSemPost(
-        (OS_SEM*)&comms_busy,
-        (OS_OPT)OS_OPT_POST_1,
-        (OS_ERR*)&os_err
-      );
-  }
-}
-
 static void ReceiveTask(void *p_arg){
   OS_ERR os_err;
 
   while(DEF_TRUE){
-    char MSG[1];
     OSSemPend(
       (OS_SEM*)&comms_busy,
       (OS_TICK)0,
@@ -457,32 +447,24 @@ static void ReceiveTask(void *p_arg){
       (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
-    HAL_UART_Receive(&huart3, (uint8_t*)MSG, sizeof(MSG), 100);
-    append_char_to_buffer(&rb, MSG[0]);
-    OSSemPost(
-        (OS_SEM*)&comms_busy,
-        (OS_OPT)OS_OPT_POST_1,
-        (OS_ERR*)&os_err
-      );
 
-    if(get_buffer_size(&rb)){
-      OSSemPost(
-        (OS_SEM*)&transmitToPC,
-        (OS_OPT)OS_OPT_POST_1,
-        (OS_ERR*)&os_err
-      );
+    HAL_UART_Receive(&huart3, (uint8_t*)message, sizeof(message), 100);
+    unsigned char cleaned_MSG[strlen(message)];
+
+    for(int i = 0; i < strlen(message); i++){
+      cleaned_MSG[i] = message[i];
     }
 
+    HAL_UART_Transmit(&huart2, cleaned_MSG, sizeof(cleaned_MSG), 100);
+    // append_string_to_buffer(&rb, message);
+
+    // unsigned char MSG_2[7];
+    // pop_string_from_buffer(&rb, MSG_2, sizeof(MSG_2));
+    // HAL_UART_Transmit(&huart2, MSG_2, sizeof(MSG_2), 100);
+
     OSSemPost(
-      (OS_SEM*)&startBlink,
+      (OS_SEM*)&comms_busy,
       (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-    OSSemPend(
-      (OS_SEM*)&endBlink,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
   }
@@ -514,18 +496,44 @@ static void BlinkTask(void *p_arg)
   }
 }
 
-// static void print_moisture_percentage(){
-//   OS_ERR os_err;
-//   double percentage;
-//   unsigned char MSG[10];
+static void MoisturePercentageTask(){
+  OS_ERR os_err;
+  int minimum = 1200; // Minimal possible voltage, this means that the sensor is currently dipped in water
+  int maximum = 2900; // Maximal possible voltage, this means that the sensor is currently measuring the air
+  double max_value = maximum - minimum; // Maximal possible delta-Voltage
 
-//   while(DEF_TRUE){
-//     percentage = get_moisture_percentage();
-//     sprintf((char*)MSG, "%d.%d", (int)percentage, (int)((percentage - (double)(int)percentage) * 100));  
-//     HAL_UART_Transmit(&huart2, MSG, sizeof(MSG), 100);
-//     OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &os_err);
-//   }
-// }
+  while(DEF_TRUE){
+    double delta_voltage;
+    OSSemPost(
+      (OS_SEM*)&startAnalog,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
+    OSSemPend(
+      (OS_SEM*)&endAnalog,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
+    
+    delta_voltage = voltage - minimum;
+    double percentage = ((double)(max_value - delta_voltage) / max_value * 100.00);
+    if(voltage < 0){
+      sprintf(message, "SensorVal:100.0\r\n");
+    } else if(voltage > maximum){
+      sprintf(message, "SensorVal:00.00\r\n");
+    } else {
+      sprintf(message, "SensorVal:%d.%d\r\n", (int)percentage, (int)((percentage - (double)(int)percentage) * 100));
+    }
+
+    OSSemPost(
+      (OS_SEM*)&transmitUART3,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
+  }
+}
 
 /* USER CODE END 4 */
 
