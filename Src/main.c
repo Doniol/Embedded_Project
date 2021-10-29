@@ -19,7 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#define RECEIVER // Either set the board as TRANSMITTER, RECEIVER or ANALOG_MEASURE
+#define TRANSMITTER // Either set the board as TRANSMITTER or RECEIVER
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -43,14 +43,15 @@
 #define TRANSMIT_TASK_STK_SIZE 128u
 #define TRANSMIT_TO_PC_TASK_STK_SIZE 128u
 #define READ_ANALOG_TASK_STK_SIZE 128u
+#define LIGHT_DETECTION_TASK_STK_SIZE 128u
 /* Task Priority */
 #define APP_TASK_START_PRIO 1u
 #define MOISTURE_DETECTION_PRIO 4u
 #define BLINK_TASK_PRIO 5u
 #define RECEIVE_TASK_PRIO 2u
 #define TRANSMIT_TASK_PRIO 2u
-#define TRANSMIT_TO_PC_TASK_PRIO 3u
 #define READ_ANALOG_TASK_PRIO 6u
+#define LIGHT_DETECTION_TASK_PRIO 3u
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -65,7 +66,6 @@
 struct ring_buffer rb;
 unsigned char buffer[BUFFER_SIZE];
 char message[BUFFER_SIZE];
-int voltage;
 /* Task Control Block */
 static OS_TCB AppTaskStartTCB;
 static OS_TCB MoistureDetectionTCB;
@@ -73,7 +73,8 @@ static OS_TCB BlinkTaskTCB;
 static OS_TCB ReceiveTaskTCB;
 static OS_TCB TransmitTaskTCB;
 static OS_TCB TransmitToPCTaskTCB;
-static OS_TCB ReadAnalogTaskTCB;
+static OS_TCB ReadMoistureTaskTCB;
+static OS_TCB LightDetectionTaskTCB;
 /* Task Stack */
 static CPU_STK AppTaskStartStk[APP_TASK_START_STK_SIZE];
 static CPU_STK MoistureDetectionStk[MOISTURE_DETECTION_STK_SIZE];
@@ -81,7 +82,8 @@ static CPU_STK BlinkTaskStk[BLINK_TASK_STK_SIZE];
 static CPU_STK ReceiveTaskStk[RECEIVE_TASK_STK_SIZE];
 static CPU_STK TransmitTaskStk[TRANSMIT_TASK_STK_SIZE];
 static CPU_STK TransmitToPCTaskStk[TRANSMIT_TO_PC_TASK_STK_SIZE];
-static CPU_STK ReadAnalogTaskStk[READ_ANALOG_TASK_STK_SIZE];
+static CPU_STK ReadMoistureTaskStk[READ_ANALOG_TASK_STK_SIZE];
+static CPU_STK LightDetectionTaskStk[LIGHT_DETECTION_TASK_STK_SIZE];
 /* Semaphore */
 OS_SEM sem;
 OS_SEM startBlink;
@@ -102,7 +104,8 @@ static void MoisturePercentageTask();
 static void ReceiveTask(void *p_arg);
 static void TransmitTask(void *p_arg);
 static void TransmitToPCTask(void *p_arg);
-static void ReadAnalogTask(void *p_arg);
+static void ReadMoistureTask(void *p_arg);
+static void LightMeasureTask(void *p_arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -258,7 +261,8 @@ static void AppTaskStart(void *p_arg)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
-  MX_ADC_Init();
+  MX_ADC6_Init();
+  MX_ADC7_Init();
   init_buffer(&rb, buffer, BUFFER_SIZE);
 
   OSTaskCreate(
@@ -276,24 +280,6 @@ static void AppTaskStart(void *p_arg)
       (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
       (OS_ERR *)&os_err);
     
-#ifdef ANALOG_MEASURE
-
-  OSTaskCreate(
-      (OS_TCB *)&ReadAnalogTaskTCB,
-      (CPU_CHAR *)"Read Analog Task",
-      (OS_TASK_PTR)ReadAnalogTask,
-      (void *)0,
-      (OS_PRIO)READ_ANALOG_TASK_PRIO,
-      (CPU_STK *)&ReadAnalogTaskStk[0],
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
-      (OS_MSG_QTY)5u,
-      (OS_TICK)0u,
-      (void *)0,
-      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-      (OS_ERR *)&os_err);
-
-#endif
 #ifdef RECEIVER
 
   OSTaskCreate(
@@ -313,21 +299,6 @@ static void AppTaskStart(void *p_arg)
     
 #endif
 #ifdef TRANSMITTER
-  
-  OSTaskCreate(
-      (OS_TCB *)&TransmitTaskTCB,
-      (CPU_CHAR *)"Transmit Task",
-      (OS_TASK_PTR)TransmitTask,
-      (void *)0,
-      (OS_PRIO)TRANSMIT_TASK_PRIO,
-      (CPU_STK *)&TransmitTaskStk[0],
-      (CPU_STK_SIZE)TRANSMIT_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)TRANSMIT_TASK_STK_SIZE,
-      (OS_MSG_QTY)5u,
-      (OS_TICK)0u,
-      (void *)0,
-      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-      (OS_ERR *)&os_err);
 
   OSTaskCreate(
     (OS_TCB *)&MoistureDetectionTCB,
@@ -342,98 +313,29 @@ static void AppTaskStart(void *p_arg)
     (OS_TICK)0u,
     (void *)0,
     (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-    (OS_ERR *)&os_err
-  );
+    (OS_ERR *)&os_err);
 
   OSTaskCreate(
-      (OS_TCB *)&ReadAnalogTaskTCB,
-      (CPU_CHAR *)"Read Analog Task",
-      (OS_TASK_PTR)ReadAnalogTask,
-      (void *)0,
-      (OS_PRIO)READ_ANALOG_TASK_PRIO,
-      (CPU_STK *)&ReadAnalogTaskStk[0],
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE / 10,
-      (CPU_STK_SIZE)READ_ANALOG_TASK_STK_SIZE,
-      (OS_MSG_QTY)5u,
-      (OS_TICK)0u,
-      (void *)0,
-      (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
-      (OS_ERR *)&os_err);
+    (OS_TCB *)&LightDetectionTaskTCB,
+    (CPU_CHAR *)"Light Detection",
+    (OS_TASK_PTR)LightMeasureTask,
+    (void *)0,
+    (OS_PRIO)LIGHT_DETECTION_TASK_PRIO,
+    (CPU_STK *)&LightDetectionTaskStk[0],
+    (CPU_STK_SIZE)LIGHT_DETECTION_TASK_STK_SIZE / 10,
+    (CPU_STK_SIZE)LIGHT_DETECTION_TASK_STK_SIZE,
+    (OS_MSG_QTY)5u,
+    (OS_TICK)0u,
+    (void *)0,
+    (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+    (OS_ERR *)&os_err);
 
 #endif
-
   OSSemPost(
-      (OS_SEM*)&comms_busy,
-      (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-}
-
-static void ReadAnalogTask(void *p_arg){
-  HAL_ADC_Start(&hadc);
-  OS_ERR os_err;
-
-  while(DEF_TRUE){
-    OSSemPend(
-      (OS_SEM*)&startAnalog,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-    uint16_t raw_value;
-
-    HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
-
-    raw_value = HAL_ADC_GetValue(&hadc);
-    voltage = ((float)raw_value) / 4096 * 3300;
-    
-    OSSemPost(
-      (OS_SEM*)&endAnalog,
-      (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-  }
-}
-
-static void TransmitTask(void *p_arg){
-  OS_ERR os_err;
-
-  while(DEF_TRUE){
-    OSSemPend(
-      (OS_SEM*)&transmitUART3,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-    OSSemPend(
-      (OS_SEM*)&comms_busy,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-    HAL_UART_Transmit(&huart3, message, BUFFER_SIZE, 100);
-    OSSemPost(
-      (OS_SEM*)&comms_busy,
-      (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-    
-    OSSemPost(
-      (OS_SEM*)&startBlink,
-      (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
-    OSSemPend(
-      (OS_SEM*)&endBlink,
-      (OS_TICK)0,
-      (OS_OPT)OS_OPT_PEND_BLOCKING,
-      (CPU_TS*)NULL,
-      (OS_ERR*)&os_err
-    );
-  }
+    (OS_SEM*)&comms_busy,
+    (OS_OPT)OS_OPT_POST_1,
+    (OS_ERR*)&os_err
+  );
 }
 
 static void ReceiveTask(void *p_arg){
@@ -449,13 +351,13 @@ static void ReceiveTask(void *p_arg){
     );
 
     HAL_UART_Receive(&huart3, (uint8_t*)message, sizeof(message), 100);
-    unsigned char cleaned_MSG[strlen(message)];
+    // unsigned char cleaned_MSG[strlen(message)];
 
-    for(int i = 0; i < strlen(message); i++){
-      cleaned_MSG[i] = message[i];
-    }
+    // for(int i = 0; i < strlen(message); i++){
+    //   cleaned_MSG[i] = message[i];
+    // }
 
-    HAL_UART_Transmit(&huart2, cleaned_MSG, sizeof(cleaned_MSG), 100);
+    HAL_UART_Transmit(&huart2, message, sizeof(message), 100);
     // append_string_to_buffer(&rb, message);
 
     // unsigned char MSG_2[7];
@@ -496,29 +398,54 @@ static void BlinkTask(void *p_arg)
   }
 }
 
-static void MoisturePercentageTask(){
+static void LightMeasureTask(void *p_arg){
+  OS_ERR os_err;
+  HAL_ADC_Start(&hadc6);
+
+  while(DEF_TRUE){
+    OSSemPend(
+      (OS_SEM*)&comms_busy,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
+      (OS_ERR*)&os_err
+    );
+    read_ldr_sensor();
+    OSSemPost(
+      (OS_SEM*)&comms_busy,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
+    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &os_err);
+  }
+}
+
+
+static void MoisturePercentageTask(void *p_arg){
+  HAL_ADC_Start(&hadc7);
   OS_ERR os_err;
   int minimum = 1200; // Minimal possible voltage, this means that the sensor is currently dipped in water
   int maximum = 2900; // Maximal possible voltage, this means that the sensor is currently measuring the air
   double max_value = maximum - minimum; // Maximal possible delta-Voltage
 
   while(DEF_TRUE){
-    double delta_voltage;
-    OSSemPost(
-      (OS_SEM*)&startAnalog,
-      (OS_OPT)OS_OPT_POST_1,
-      (OS_ERR*)&os_err
-    );
     OSSemPend(
-      (OS_SEM*)&endAnalog,
+      (OS_SEM*)&comms_busy,
       (OS_TICK)0,
       (OS_OPT)OS_OPT_PEND_BLOCKING,
       (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
+    double delta_voltage;
+    int voltage;
+
+    HAL_ADC_PollForConversion(&hadc7, HAL_MAX_DELAY);
+
+    voltage = ((float)HAL_ADC_GetValue(&hadc7)) / 4096 * 3300;
     
     delta_voltage = voltage - minimum;
     double percentage = ((double)(max_value - delta_voltage) / max_value * 100.00);
+    
     if(voltage < 0){
       sprintf(message, "SensorVal:100.0\r\n");
     } else if(voltage > maximum){
@@ -527,9 +454,24 @@ static void MoisturePercentageTask(){
       sprintf(message, "SensorVal:%d.%d\r\n", (int)percentage, (int)((percentage - (double)(int)percentage) * 100));
     }
 
+    HAL_UART_Transmit(&huart3, (uint8_t*)message, BUFFER_SIZE, 100);
+    HAL_UART_Transmit(&huart2, (uint8_t*)message, BUFFER_SIZE, 100);
     OSSemPost(
-      (OS_SEM*)&transmitUART3,
+      (OS_SEM*)&comms_busy,
       (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
+    
+    OSSemPost(
+      (OS_SEM*)&startBlink,
+      (OS_OPT)OS_OPT_POST_1,
+      (OS_ERR*)&os_err
+    );
+    OSSemPend(
+      (OS_SEM*)&endBlink,
+      (OS_TICK)0,
+      (OS_OPT)OS_OPT_PEND_BLOCKING,
+      (CPU_TS*)NULL,
       (OS_ERR*)&os_err
     );
   }

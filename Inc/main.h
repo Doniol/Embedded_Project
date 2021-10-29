@@ -41,6 +41,7 @@ extern "C" {
 #include <spi.h>
 #include <tim.h>
 #include <ring_buffer.h>
+#include <ldr.h>
 
 /* USER CODE END Includes */
 

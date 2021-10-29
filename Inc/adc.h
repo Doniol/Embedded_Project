@@ -31,13 +31,15 @@ extern "C" {
 
 /* USER CODE END Includes */
 
-extern ADC_HandleTypeDef hadc;
+extern ADC_HandleTypeDef hadc6;
+extern ADC_HandleTypeDef hadc7;
 
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 
-void MX_ADC_Init(void);
+void MX_ADC6_Init(void);
+void MX_ADC7_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 
